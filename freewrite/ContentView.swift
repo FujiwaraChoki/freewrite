@@ -87,6 +87,9 @@ struct ContentView: View {
     @State private var didCopyPrompt: Bool = false // Add state for copy prompt feedback
     @State private var backspaceDisabled = false // Add state for backspace toggle
     @State private var isHoveringBackspaceToggle = false // Add state for backspace toggle hover
+    @ObservedObject private var cloud = CloudSyncManager.shared // Account + cloud sync
+    @State private var showingAccount = false
+    @State private var isHoveringAccount = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     let entryHeight: CGFloat = 40
     
@@ -200,67 +203,105 @@ struct ContentView: View {
         }
     }
     
+    // Read every entry file in the Freewrite folder (without changing anything)
+    private func scanEntriesOnDisk() throws -> [(entry: HumanEntry, date: Date, content: String)] {
+        let documentsDirectory = getDocumentsDirectory()
+        let fileURLs = try fileManager.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil)
+        let mdFiles = fileURLs.filter { $0.pathExtension == "md" }
+        
+        print("Found \(mdFiles.count) .md files")
+        
+        // Process each file
+        return mdFiles.compactMap { fileURL -> (entry: HumanEntry, date: Date, content: String)? in
+            let filename = fileURL.lastPathComponent
+            print("Processing: \(filename)")
+            
+            // Extract UUID and date from filename - pattern [uuid]-[yyyy-MM-dd-HH-mm-ss].md
+            guard let uuidMatch = filename.range(of: "\\[(.*?)\\]", options: .regularExpression),
+                  let dateMatch = filename.range(of: "\\[(\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2})\\]", options: .regularExpression),
+                  let uuid = UUID(uuidString: String(filename[uuidMatch].dropFirst().dropLast())) else {
+                print("Failed to extract UUID or date from filename: \(filename)")
+                return nil
+            }
+            
+            // Parse the date string
+            let dateString = String(filename[dateMatch].dropFirst().dropLast())
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+            
+            guard let fileDate = dateFormatter.date(from: dateString) else {
+                print("Failed to parse date from filename: \(filename)")
+                return nil
+            }
+            
+            // Read file contents for preview
+            do {
+                let content = try String(contentsOf: fileURL, encoding: .utf8)
+                let preview = content
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let truncated = preview.isEmpty ? "" : (preview.count > 30 ? String(preview.prefix(30)) + "..." : preview)
+                
+                // Format display date
+                dateFormatter.dateFormat = "MMM d"
+                let displayDate = dateFormatter.string(from: fileDate)
+                
+                return (
+                    entry: HumanEntry(
+                        id: uuid,
+                        date: displayDate,
+                        filename: filename,
+                        previewText: truncated
+                    ),
+                    date: fileDate,
+                    content: content  // Store the full content to check for welcome message
+                )
+            } catch {
+                print("Error reading file: \(error)")
+                return nil
+            }
+        }
+    }
+    
+    // Refresh the entries list after sync changed files, without creating a new entry
+    private func reloadEntriesFromDisk() {
+        do {
+            entries = try scanEntriesOnDisk()
+                .sorted { $0.date > $1.date }
+                .map { $0.entry }
+        } catch {
+            print("Error reloading entries: \(error)")
+        }
+    }
+    
+    // Called right after sync wrote or removed entry files
+    private func handleSyncChanges(_ changes: SyncChanges) {
+        let openFilename = selectedEntryId.flatMap { id in entries.first(where: { $0.id == id })?.filename }
+        reloadEntriesFromDisk()
+        guard let openFilename = openFilename else { return }
+        
+        if changes.removed.contains(openFilename) {
+            // The open entry was deleted on another device
+            if let firstEntry = entries.first {
+                selectedEntryId = firstEntry.id
+                loadEntry(entry: firstEntry)
+            } else {
+                createNewEntry()
+            }
+        } else if changes.changed.contains(openFilename),
+                  let openEntry = entries.first(where: { $0.filename == openFilename }) {
+            // The open entry was edited on another device
+            loadEntry(entry: openEntry)
+        }
+    }
+    
     // Add function to load existing entries
     private func loadExistingEntries() {
         let documentsDirectory = getDocumentsDirectory()
         print("Looking for entries in: \(documentsDirectory.path)")
         
         do {
-            let fileURLs = try fileManager.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil)
-            let mdFiles = fileURLs.filter { $0.pathExtension == "md" }
-            
-            print("Found \(mdFiles.count) .md files")
-            
-            // Process each file
-            let entriesWithDates = mdFiles.compactMap { fileURL -> (entry: HumanEntry, date: Date, content: String)? in
-                let filename = fileURL.lastPathComponent
-                print("Processing: \(filename)")
-                
-                // Extract UUID and date from filename - pattern [uuid]-[yyyy-MM-dd-HH-mm-ss].md
-                guard let uuidMatch = filename.range(of: "\\[(.*?)\\]", options: .regularExpression),
-                      let dateMatch = filename.range(of: "\\[(\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2})\\]", options: .regularExpression),
-                      let uuid = UUID(uuidString: String(filename[uuidMatch].dropFirst().dropLast())) else {
-                    print("Failed to extract UUID or date from filename: \(filename)")
-                    return nil
-                }
-                
-                // Parse the date string
-                let dateString = String(filename[dateMatch].dropFirst().dropLast())
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd-HH-mm-ss"
-                
-                guard let fileDate = dateFormatter.date(from: dateString) else {
-                    print("Failed to parse date from filename: \(filename)")
-                    return nil
-                }
-                
-                // Read file contents for preview
-                do {
-                    let content = try String(contentsOf: fileURL, encoding: .utf8)
-                    let preview = content
-                        .replacingOccurrences(of: "\n", with: " ")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let truncated = preview.isEmpty ? "" : (preview.count > 30 ? String(preview.prefix(30)) + "..." : preview)
-                    
-                    // Format display date
-                    dateFormatter.dateFormat = "MMM d"
-                    let displayDate = dateFormatter.string(from: fileDate)
-                    
-                    return (
-                        entry: HumanEntry(
-                            id: uuid,
-                            date: displayDate,
-                            filename: filename,
-                            previewText: truncated
-                        ),
-                        date: fileDate,
-                        content: content  // Store the full content to check for welcome message
-                    )
-                } catch {
-                    print("Error reading file: \(error)")
-                    return nil
-                }
-            }
+            let entriesWithDates = try scanEntriesOnDisk()
             
             // Sort and extract entries
             entries = entriesWithDates
@@ -382,6 +423,26 @@ struct ContentView: View {
     
     var popoverTextColor: Color {
         return colorScheme == .light ? Color.primary : Color.white
+    }
+    
+    @MainActor var accountStatusText: String {
+        guard let email = cloud.email else {
+            return "Sign in to sync"
+        }
+        if cloud.isSyncing && cloud.lastSyncedAt == nil {
+            return "Syncing · \(email)"
+        }
+        if cloud.lastError != nil {
+            return "Not synced · \(email)"
+        }
+        return "Synced · \(email)"
+    }
+    
+    @MainActor var accountStatusIcon: String {
+        if cloud.email == nil {
+            return "icloud"
+        }
+        return cloud.lastError != nil && !cloud.isSyncing ? "exclamationmark.icloud" : "checkmark.icloud"
     }
 
     
@@ -945,6 +1006,31 @@ struct ContentView: View {
                         isHoveringHistory = hovering
                     }
                     
+                    // Account / sync status
+                    Button(action: {
+                        showingAccount = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: accountStatusIcon)
+                                .font(.system(size: 10))
+                            Text(accountStatusText)
+                                .font(.system(size: 10))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                        }
+                        .foregroundColor(isHoveringAccount ? textHoverColor : .secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
+                    .padding(.top, -4)
+                    .padding(.bottom, 10)
+                    .help(cloud.lastError ?? "Account and sync")
+                    .onHover { hovering in
+                        isHoveringAccount = hovering
+                    }
+                    
                     Divider()
                     
                     // Entries List
@@ -961,6 +1047,7 @@ struct ContentView: View {
                                         
                                         selectedEntryId = entry.id
                                         loadEntry(entry: entry)
+                                        cloud.requestSync()
                                     }
                                 }) {
                                     HStack(alignment: .top) {
@@ -1065,6 +1152,20 @@ struct ContentView: View {
         .onAppear {
             showingSidebar = false  // Hide sidebar by default
             loadExistingEntries()
+            
+            // Let cloud sync see unsaved editor text and refresh us when it changes files
+            cloud.editorSnapshot = {
+                guard let currentId = selectedEntryId,
+                      let currentEntry = entries.first(where: { $0.id == currentId }) else { return nil }
+                return (filename: currentEntry.filename, text: text)
+            }
+            cloud.onFilesChanged = { changes in
+                handleSyncChanges(changes)
+            }
+            cloud.start()
+        }
+        .sheet(isPresented: $showingAccount) {
+            AccountView(cloud: cloud, colorScheme: colorScheme)
         }
         .onChange(of: text) { _ in
             // Save current entry when text changes

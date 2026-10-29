@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Supabase project used for account sign-in and cloud sync (see docs/cloud-sync.md).
+  Leave both empty to build the app without sync. The publishable (anon) key is
+  safe to ship: every row is protected by row-level security.
+  The FREEWRITE_SUPABASE_URL / FREEWRITE_SUPABASE_ANON_KEY environment variables
+  (e.g. in the Xcode scheme) take precedence over these values.
+-->
+<plist version="1.0">
+<dict>
+    <key>SupabaseURL</key>
+    <string></string>
+    <key>SupabaseAnonKey</key>
+    <string></string>
+</dict>
+</plist>

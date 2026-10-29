@@ -45,4 +45,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.center()
         }
     }
+    
+    // Give cloud sync a few seconds to push the latest writing before quitting
+    @MainActor
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let cloud = CloudSyncManager.shared
+        guard cloud.isSignedIn else { return .terminateNow }
+        Task { @MainActor in
+            await cloud.syncBeforeQuit(timeout: 5)
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 } 
