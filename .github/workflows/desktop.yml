@@ -1,0 +1,68 @@
+name: Desktop apps
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Repository variables (Settings → Secrets and variables → Actions → Variables).
+  # Left unset, the apps build without cloud sync.
+  FREEWRITE_SUPABASE_URL: ${{ vars.FREEWRITE_SUPABASE_URL }}
+  FREEWRITE_SUPABASE_ANON_KEY: ${{ vars.FREEWRITE_SUPABASE_ANON_KEY }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\windows\freewrite.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freewrite-windows
+          path: |
+            desktop/target/release/freewrite.exe
+            desktop/target/installer/*.exe
+
+  arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build tools
+        run: pacman -Syu --noconfirm --needed base-devel git rust
+      - uses: actions/checkout@v4
+      - name: makepkg
+        run: |
+          useradd -m builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          cd desktop/packaging/arch
+          su builder -c "FREEWRITE_SUPABASE_URL='$FREEWRITE_SUPABASE_URL' FREEWRITE_SUPABASE_ANON_KEY='$FREEWRITE_SUPABASE_ANON_KEY' makepkg --noconfirm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freewrite-arch
+          path: desktop/packaging/arch/*.pkg.tar.zst
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: >
+          xcodebuild -project freewrite.xcodeproj -target freewrite -configuration Debug
+          CODE_SIGNING_ALLOWED=NO build

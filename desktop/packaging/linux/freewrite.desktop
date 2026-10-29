@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=freewrite
+GenericName=Freewriting
+Comment=A simple app to freewrite
+Exec=freewrite
+Icon=freewrite
+Terminal=false
+Categories=Office;Utility;TextEditor;
+Keywords=writing;journal;freewrite;
+StartupWMClass=freewrite

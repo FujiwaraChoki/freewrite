@@ -1,0 +1,51 @@
+# Builds the freewrite package from this checkout:
+#   cd desktop/packaging/arch && makepkg -si
+pkgname=freewrite
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="A simple, open-source app to freewrite"
+arch=('x86_64' 'aarch64')
+url="https://github.com/farzaa/freewrite"
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'hicolor-icon-theme' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'vulkan-icd-loader' 'libglvnd')
+makedepends=('cargo')
+optdepends=(
+  'xdg-desktop-portal: save dialog for PDF export'
+  'gnome-keyring: keep your sign-in in the Secret Service (any provider works)'
+  'ttf-liberation: metric-compatible fonts for the Arial and Serif buttons'
+)
+options=('!lto' '!debug')
+
+_crate() {
+  echo "$startdir/../.."
+}
+
+prepare() {
+  cd "$(_crate)"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$(_crate)"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  # Set FREEWRITE_SUPABASE_URL / FREEWRITE_SUPABASE_ANON_KEY to bake in cloud sync.
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$(_crate)"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --frozen --release
+}
+
+package() {
+  local crate="$(_crate)"
+  install -Dm755 "$srcdir/target/release/freewrite" "$pkgdir/usr/bin/freewrite"
+  install -Dm644 "$crate/packaging/linux/freewrite.desktop" "$pkgdir/usr/share/applications/freewrite.desktop"
+  install -Dm644 "$crate/packaging/linux/freewrite-256.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/freewrite.png"
+  install -Dm644 "$crate/packaging/linux/freewrite-512.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/freewrite.png"
+  install -Dm644 "$crate/../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
